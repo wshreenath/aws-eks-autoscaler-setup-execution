@@ -1,0 +1,424 @@
+
+   NOTE :-  Prerequisites:
+            create one ec2 server with AMI AL2023 image with all traffic and anywhere access security group. create cluster using step 
+            mentioned in below github file .
+            
+            https://github.com/wshreenath/dev-ops--tool-setup/blob/main/aws-eks-cluster-AMI-linux2-setup
+
+            Okay, let's go through the steps to set up and test the Cluster Autoscaler on your shree-cluster EKS cluster in us-east-2.
+            Before you start, ensure you have the following configured on your machine where you will be executing these commands:
+            AWS CLI: Configured with credentials that have sufficient permissions to manage EKS, EC2 Auto Scaling Groups, and IAM.
+            kubectl: Configured to connect to your shree-cluster. You can configure it using:
+
+
+
+
+   STEP-1 :- Get Your OIDC Provider URL and Create IAM Role for Cluster Autoscaler (IRSA-IAM ROLE SERVICE A/C )
+   
+               Since you enabled --with-oidc when creating the cluster, we'll use IAM Roles for Service Accounts (IRSA) for the Cluster 
+               Autoscaler. This is a best practice.
+               Get your OIDC Provider URL:
+               
+               #terminal execution 
+               aws eks describe-cluster \
+                  --name shree-cluster \
+                  --query "cluster.identity.oidc.issuer" \
+                  --output text
+                  
+               
+            -  This will output a URL like https://oidc.eks.us-east-2.amazonaws.com/id/EXAMPLED9C1F8259A833E1A61460E7F5E9   
+               ===> https://oidc.eks.us-east-2.amazonaws.com/id/5BD8C1A8260756349B2EC4059CFA8586
+            
+            -  Create an IAM Policy for Cluster Autoscaler (if not already existing):
+               You can use the AmazonEKSClusterAutoscalerPolicy directly, or a custom one with similar permissions. The 
+               AmazonEKSClusterAutoscalerPolicy is the standard one.
+               
+               
+
+🔹 Step 2: Create Trust Policy (trust-policy.json)
+      
+            -  Create a Trust Policy JSON for the IAM Role:
+               this trust policy will authenticate our aws access key and secret key through OIDC provider.
+               Save the following content to a file named trust-policy.json. Replace <YOUR_OIDC_PROVIDER_URL> with 
+               the URL you got above and <YOUR_AWS_ACCOUNT_ID> with your AWS account ID.
+
+               ✅ Replace:
+                  <AWS_ACCOUNT_ID> with your AWS account ID.
+                  <OIDC_PROVIDER_URL_HOST> with the value from step 1 (without https://).
+                  Save it as trust-policy.json.
+
+========>sample file look like this.updated and corrected
+
+vi trust-policy.json
+
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::<YOUR_AWS_ACCOUNT_ID>:oidc-provider/<YOUR_OIDC_PROVIDER_URL_HOST>"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "<YOUR_OIDC_PROVIDER_URL_HOST>:sub": "system:serviceaccount:kube-system:cluster-autoscaler"
+          "<YOUR_OIDC_PROVIDER_URL_HOST>:aud": "sts.amazonaws.com"
+          
+        }
+      }
+    }
+  ]
+}
+
+========>real file look like this.updated and corrected
+
+vi trust-policy.json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::314146317844:oidc-provider/oidc.eks.us-east-2.amazonaws.com/id/86DBC91092917A0DB75443ADC465A01B"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.us-east-2.amazonaws.com/id/86DBC91092917A0DB75443ADC465A01B:sub": "system:serviceaccount:kube-system:cluster-autoscaler",
+          "oidc.eks.us-east-2.amazonaws.com/id/86DBC91092917A0DB75443ADC465A01B:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+
+
+
+   STEP-3 :-Create the IAM Role:
+               refer the above trust-policy.json file  as policy document.
+
+            aws iam create-role \
+              --role-name eks-cluster-autoscaler-role \
+              --assume-role-policy-document file://trust-policy.json
+
+
+  
+   STEP-4:- Create IAM Policy for Cluster Autoscaler and respective json file or documents 
+            Create a policy document "autoscaler-policy.json"
+
+
+vi autoscaler-policy.json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "autoscaling:DescribeAutoScalingGroups",
+        "autoscaling:DescribeAutoScalingInstances",
+        "autoscaling:DescribeLaunchConfigurations",
+        "autoscaling:DescribeTags",
+        "autoscaling:SetDesiredCapacity",
+        "autoscaling:TerminateInstanceInAutoScalingGroup",
+        "ec2:DescribeLaunchTemplateVersions"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+
+   STEP -4B : -Create the  IAM Policy for Amazon-EKS-Cluster-Autoscaler
+      
+      NOTE:- if we using AL2023 IMAGE for ec2 then no need to create  AMAZON EKS CLSUTER  AUTOSCALER POLICY .its already there in system-pods
+              because this image mode for eks cluster prospective . or compatible with eks .there is another IMAGE AMI AL2 which will depricated 
+              soon .
+              
+              
+           
+               aws iam create-policy \
+                    --policy-name AmazonEKSClusterAutoscalerPolicy  \
+                    --policy-document file://autoscaler-policy.json
+
+
+   STEP-5 : -  Attach the AmazonEKSClusterAutoscalerPolicy to the new role:
+
+               aws iam attach-role-policy \
+                 --role-name eks-cluster-autoscaler-role \
+                 --policy-arn arn:aws:iam::<AWS_ACCOUNT_ID>:policy/<Amazon-EKS-Cluster-Autoscaler-POLICY-NAME>
+
+               aws iam attach-role-policy \
+                 --role-name eks-cluster-autoscaler-role \
+                 --policy-arn arn:aws:iam::314146317844:policy/AmazonEKSClusterAutoscalerPolicy 
+
+
+   Step 6: Configure to connect to your shree-cluster and Describe the Node Group in EKS
+
+         -     Configured to connect to your shree-cluster. You can configure it using:
+               
+               aws eks update-kubeconfig --name shree-cluster --region us-east-2
+
+         -     This step helps you confirm the current configuration of your node group, especially its associated IAM role and auto-scaling
+               limits.
+               
+               aws eks describe-nodegroup --cluster-name shree-cluster --nodegroup-name shree-cluster-ng-1 --region us-east-2
+               
+                              
+               Expected Output:-
+               You will get a JSON output containing details about your shree-cluster-ng-1 nodegroup. Look for the nodeRole ARN within 
+               the output.Note down the nodeRole ARN. You will need it in the next step. It will look something like this:
+                 
+                     "nodeRole": "arn:aws:iam::314146317844:role/eksctl-shree-cluster-nodegroup-shr-NodeInstanceRole-1Gg4QbbAe6i5",
+
+          ==============     
+               obsolete this step
+
+         -     to check arn of eks-cluster-autoscaler-role role 
+
+               aws iam get-role --role-name eks-cluster-autoscaler-role --query 'Role.Arn' --output text
+               ===> arn:aws:iam::314146317844:role/eks-cluster-autoscaler-role
+               
+         ==================
+
+
+   Step 7:  Attaching Cluster Autoscaler  IAM Policy  to EKS worker nodes IAM role
+
+         -     The IAM role used by your EKS worker nodes needs permissions to interact with Auto Scaling Groups to scale up and down.
+
+         -     Identify the Node Instance Role: From the output of Step 6, copy the nodeRole ARN. The role name is the last part of the
+               ARN (e.g., eksctl-shree-cluster-nodegroup-shree-cluster-NodeInstanceRole-XXXXXXXXXXX).
+               
+               ==>"nodeRole": "arn:aws:iam::314146317844:role/eksctl-shree-cluster-nodegroup-shr-NodeInstanceRole-1Gg4QbbAe6i5",
+
+         -     Attach the AmazonEKSClusterAutoscalerPolicy: here replace the policy arn take from above 
+               Replace <YOUR_NODE_INSTANCE_ROLE_NAME> with the actual role name you identified in the previous sub-step.
+              
+         -     
+                 aws iam attach-role-policy  \
+                 --role-name <YOUR_NODE_INSTANCE_ROLE_NAME>  \
+                 --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterAutoscalerPolicy
+                 
+                 aws iam attach-role-policy  \
+                 --role-name eksctl-shree-cluster-nodegroup-shr-NodeInstanceRole-1Gg4QbbAe6i5  \
+                 --policy-arn arn:aws:iam::314146317844:policy/AmazonEKSClusterAutoscalerPolicy 
+
+
+   Step 8: Install Helm package on server
+
+            Helm is a package manager for Kubernetes, and we'll use it to install the Cluster Autoscaler.
+            Download Helm:
+            
+                  wget https://get.helm.sh/helm-v3.6.0-linux-amd64.tar.gz
+                  tar -zxvf helm-v3.6.0-linux-amd64.tar.gz
+                  sudo mv linux-amd64/helm /usr/local/bin/helm
+                  sudo chmod 777 /usr/local/bin/helm
+                  helm version
+               
+  Step 9: check and modify  Auto-scaling capacity of worker node group (ASG group ) 
+  
+               While your eksctl create cluster command already set nodes-max=4, it's crucial to confirm and potentially adjust the 
+               underlying Auto Scaling Group's Max capacity if you intend to scale beyond 4 nodes.
+
+               Access AWS Management Console:-
+
+                  EC2 service-->left navigation panel-->Auto Scaling; click -->"Auto Scaling Groups
+                  Identify your Nodegroup's ASG:--> Auto Scaling Group named similar to eksctl-shree-cluster-nodegroup-shree-cluste-ng-1-->
+                  eksctl-shree-cluster-nodegroup-shree-cluste-ng-1 :Select-->Edit-->Group details-->Desired capacity-->Max capacity:modify to 
+                   10--> Click "Update" to save 
+                  
+                  
+      note:-   If you want to test scaling to 50 pods, you'd need to increase this Max capacity to at least 10-15 to accommodate.
+
+
+
+   Step 10: Install Cluster Autoscaler using Helm
+
+               helm repo add autoscaler https://kubernetes.github.io/autoscaler
+               helm repo update
+               
+      NOTE :  for installing cluster autoscaler ,you will need cluster auto scaler iam role  and its ARN .you will get that below cmd     
+            
+               aws iam get-role --role-name <your-role-name> --query 'Role.Arn' --output text
+               aws iam get-role --role-name eks-cluster-autoscaler-role  --query 'Role.Arn' --output text
+               ==>arn:aws:iam::314146317844:role/eks-cluster-autoscaler-role
+
+            
+            
+   =========sample for installing cluster autoscaler          
+
+            helm install cluster-autoscaler autoscaler/cluster-autoscaler \
+              --namespace kube-system \
+              --set autoDiscovery.clusterName=shree-cluster \
+              --set awsRegion=us-east-2 \
+              --set extraArgs.balance-similar-node-groups=true \
+              --set extraArgs.skip-nodes-with-system-pods=false \
+              --set rbac.create=true \
+              --set serviceAccount.create=true \
+              --set serviceAccount.name=cluster-autoscaler \
+              --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=<YOUR_CLUSTER_AUTOSCALER_IAM_ROLE_ARN> 
+
+   =========actual settings for installing cluster autoscaler          
+
+
+              helm install cluster-autoscaler autoscaler/cluster-autoscaler \
+              --namespace kube-system \
+              --set autoDiscovery.clusterName=shree-cluster \
+              --set awsRegion=us-east-2 \
+              --set extraArgs.balance-similar-node-groups=true \
+              --set extraArgs.skip-nodes-with-system-pods=false \
+              --set rbac.create=true \
+              --set serviceAccount.create=true \
+              --set serviceAccount.name=cluster-autoscaler \
+              --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=arn:aws:iam::314146317844:role/eks-cluster-autoscaler-role
+ 
+ 
+      verification:-Verify Cluster Autoscaler Deployment:
+
+               kubectl get pods -n kube-system | grep cluster-autoscaler
+
+
+
+   Step-11: - Deploy nginx Application and Increase Replicas
+               Deploy nginx Application ,check the no of pod and its status and Increase Replicas after some time ,check the no of pod 
+               and its status  
+
+
+vi nginx-deployment.yaml.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  labels:
+    app: nginx
+spec:
+  replicas: 1 # Start with 1 replica
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+        ports:
+        - containerPort: 80
+        resources:
+          requests: # Define resource requests to trigger autoscaling
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+
+   esc:wq
+
+      
+         -   Apply the Nginx deployment & Verify the pod is running:-
+         
+               kubectl apply -f nginx-deployment.yaml
+               kubectl get pods -l app=nginx
+
+         -   Scale Up the Application:
+          
+               kubectl scale deployment nginx --replicas=50
+               kubectl get pods -l app=nginx
+
+
+   step-12: Monitor the Scaling Process:
+               You'll start seeing many pods in Pending state as there aren't enough resources.
+   
+              kubectl get pods -l app=nginx -w
+
+
+               kubectl logs -f -n kube-system $(kubectl get pod -n kube-system -l app.kubernetes.io/name=cluster-autoscaler -o jsonpath='{.items[0].metadata.name}')
+               
+               kubectl logs -f -n kube-system $(kubectl get pod -n kube-system -l app.kubernetes.io/name=cluster-autoscaler -o jsonpath='{.items[0].metadata.name}')
+
+      -  Monitor EKS nodes:
+      
+            kubectl get nodes -w
+            
+      -  Monitor your AWS Console:
+               Go back to the EC2 Auto Scaling Groups in the AWS Console. You should see the "Desired capacity" and "In service" instance
+               count for your shree-cluster-ng-1 ASG increasing.
+               
+               
+   STEP-13:-   Clean-up (Optional but Recommended):              
+
+            Once you are done testing, you can scale down the Nginx deployment and eventually delete the Cluster Autoscaler and the EKS cluster.
+     
+      -  Scale down Nginx:    
+      
+            kubectl scale deployment nginx --replicas=0
+            
+            #execute after 5 min
+            kubectl delete -f nginx-deployment.yaml
+      
+      -  Uninstall Cluster Autoscaler:
+      
+            helm uninstall cluster-autoscaler -n kube-system
+            
+      -  Delete Cluster Autoscaler IAM Role:      
+
+
+            aws iam detach-role-policy \
+            --role-name EKSClusterAutoscalerRole-shree-cluster \
+            --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterAutoscalerPolicy
+            
+            aws iam delete-role \
+            --role-name EKSClusterAutoscalerRole-shree-cluster
+            
+      -  Detach AmazonEKSClusterAutoscalerPolicy from worker node role:      
+            
+            aws iam detach-role-policy \
+            --role-name <YOUR_NODE_INSTANCE_ROLE_NAME> \
+            --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterAutoscalerPolicy
+
+            aws iam detach-role-policy \
+            --role-name <YOUR_NODE_INSTANCE_ROLE_NAME> \
+            --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterAutoscalerPolicy
+
+      -  Delete the EKS Cluster (using eksctl):
+         
+            eksctl delete cluster --name=shree-cluster --region=us-east-2
+            
+            This command will tear down all resources created by eksctl, including the EKS cluster, node groups, and associated
+            CloudFormation stacks
+
+
+
+
+      policy-arn
+         ==>
+            arn:aws:iam::314146317844:policy/AmazonEKSClusterAutoscalerPolicy
+
+
+         role-name 
+         ==>eks-cluster-autoscaler-role
+         
+          --role-name eks-cluster-autoscaler-role \
+           --policy-arn arn:aws:iam::314146317844:policy/AmazonEKSClusterAutoscalerPolicy 
+
+            aws iam detach-role-policy --role-name EKSClusterAutoscalerRole-shree-cluster --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterAutoscalerPolicy
+            aws iam delete-role --role-name EKSClusterAutoscalerRole-shree-cluster
+
+            aws iam detach-role-policy --role-name eks-cluster-autoscaler-role --policy-arn arn:aws:iam::314146317844:policy/AmazonEKSClusterAutoscalerPolicy
+            aws iam delete-role --role-name eks-cluster-autoscaler-role
+
+
+            aws iam detach-role-policy --role-name eks-cluster-autoscaler-role --policy-arn arn:aws:iam::314146317844:policy/AmazonEKSClusterAutoscalerPolicy
+            aws iam delete-role --role-name eks-cluster-autoscaler-role
+                     
+                     YOUR_NODE_INSTANCE_ROLE_NAME>
+                    ==> eksctl-shree-cluster-nodegroup-shr-NodeInstanceRole-1Gg4QbbAe6i5
+              
+              aws iam detach-role-policy --role-name <YOUR_NODE_INSTANCE_ROLE_NAME> --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterAutoscalerPolicy
+              
+              aws iam detach-role-policy --role-name eksctl-shree-cluster-nodegroup-shr-NodeInstanceRole-1Gg4QbbAe6i5 --policy-arn arn:aws:iam::314146317844:policy/AmazonEKSClusterAutoscalerPolicy
+              
+              
+              eksctl delete cluster --name=shree-cluster --region=us-east-2
