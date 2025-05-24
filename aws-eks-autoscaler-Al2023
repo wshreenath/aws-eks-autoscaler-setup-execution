@@ -391,34 +391,3 @@ spec:
 
 
 
-
-      policy-arn
-         ==>
-            arn:aws:iam::314146317844:policy/AmazonEKSClusterAutoscalerPolicy
-
-
-         role-name 
-         ==>eks-cluster-autoscaler-role
-         
-          --role-name eks-cluster-autoscaler-role \
-           --policy-arn arn:aws:iam::314146317844:policy/AmazonEKSClusterAutoscalerPolicy 
-
-            aws iam detach-role-policy --role-name EKSClusterAutoscalerRole-shree-cluster --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterAutoscalerPolicy
-            aws iam delete-role --role-name EKSClusterAutoscalerRole-shree-cluster
-
-            aws iam detach-role-policy --role-name eks-cluster-autoscaler-role --policy-arn arn:aws:iam::314146317844:policy/AmazonEKSClusterAutoscalerPolicy
-            aws iam delete-role --role-name eks-cluster-autoscaler-role
-
-
-            aws iam detach-role-policy --role-name eks-cluster-autoscaler-role --policy-arn arn:aws:iam::314146317844:policy/AmazonEKSClusterAutoscalerPolicy
-            aws iam delete-role --role-name eks-cluster-autoscaler-role
-                     
-                     YOUR_NODE_INSTANCE_ROLE_NAME>
-                    ==> eksctl-shree-cluster-nodegroup-shr-NodeInstanceRole-1Gg4QbbAe6i5
-              
-              aws iam detach-role-policy --role-name <YOUR_NODE_INSTANCE_ROLE_NAME> --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterAutoscalerPolicy
-              
-              aws iam detach-role-policy --role-name eksctl-shree-cluster-nodegroup-shr-NodeInstanceRole-1Gg4QbbAe6i5 --policy-arn arn:aws:iam::314146317844:policy/AmazonEKSClusterAutoscalerPolicy
-              
-              
-              eksctl delete cluster --name=shree-cluster --region=us-east-2
